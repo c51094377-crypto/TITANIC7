@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>帆船 海流丸 シミュレータ</title>
+    <style>
+        body { margin: 0; padding: 0; background-color: #1a1a1a; color: #fff; font-family: sans-serif; overflow: hidden; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        #crosshair {
+            position: absolute;
+            top: 50%; left: 50%; width: 6px; height: 6px;
+            background-color: #00ffcc; border-radius: 50%; transform: translate(-50%, -50%);
+            z-index: 100; pointer-events: none;
+            box-shadow: 0 0 8px #00ffcc; display: none;
+        }
+
+        .ui-panel { 
+            position: absolute;
+            top: 20px; left: 20px; z-index: 10; 
+            background: rgba(15, 23, 42, 0.9); padding: 15px; border-radius: 8px; 
+            backdrop-filter: blur(5px);
+            border: 1px solid #334155; width: 350px; font-size: 13px; 
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5);
+            max-height: 90vh; overflow-y: auto;
+            transition: opacity 0.5s ease, pointer-events 0.5s ease;
+        }
+        h1 { margin: 0 0 10px 0; font-size: 15px; text-align: center;
+            border-bottom: 1px solid #334155; padding-bottom: 5px; color: #38bdf8; }
+        
+        .target-indicator {
+            padding: 8px;
+            margin-bottom: 12px; background: #1e293b; border-radius: 6px;
+            border-left: 4px solid #94a3b8; font-weight: bold; text-align: center; font-size: 13px;
+        }
+        .target-indicator.active { border-left-color: #f59e0b; background: #292524; color: #f59e0b; }
+        .target-indicator.steering { border-left-color: #10b981; background: #064e3b; color: #34d399; }
+
+        .control-group { margin-bottom: 12px; }
+        label { display: block; font-size: 11px; margin-bottom: 3px; color: #94a3b8; font-weight: bold; }
+        input[type="file"] { width: 100%; box-sizing: border-box; background: #1e293b; color: #fff; padding: 6px;
+            border-radius: 4px; border: 1px dashed #475569; cursor: pointer; }
+        
+        .status { font-size: 11px; color: #64748b; text-align: center; margin-top: 5px; }
+
+        .cam-status {
+            width: 100%;
+            padding: 6px; margin-top: 5px; background: #1e3a8a; 
+            color: #fff; border-radius: 4px; font-weight: bold; text-align: center; font-size: 12px;
+        }
+        .cam-status.active { background: #15803d; }
+
+        .telegraph-monitor {
+            margin-top: 12px;
+            background: #0f172a; border: 1px solid #1e293b; padding: 8px; border-radius: 6px;
+        }
+        .telegraph-monitor h2 { margin: 0 0 6px 0; font-size: 11px; color: #64748b;
+            text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px dashed #1e293b; padding-bottom: 3px;
+        }
+        .tg-row { display: flex; justify-content: space-between; padding: 3px 4px; font-family: monospace;
+            font-size: 12px; border-radius: 3px; margin-bottom: 2px; }
+        .tg-row.operating { background: rgba(245, 158, 11, 0.15); color: #fbbf24; font-weight: bold; }
+        .tg-name { color: #cbd5e1; }
+        .tg-row.operating .tg-name { color: #fbbf24; }
+        .tg-val { color: #38bdf8; font-weight: bold; }
+        .tg-row.operating .tg-val { color: #f59e0b; }
+
+        .guide-box {
+            margin-top: 12px;
+            background: rgba(255,255,255,0.02); 
+            padding: 8px; border-radius: 6px; font-size: 11px; color: #94a3b8;
+            border-left: 3px solid #0284c7; max-height: 180px; overflow-y: auto;
+        }
+        .guide-box ul { margin: 3px 0 0 0; padding-left: 14px; }
+        
+        #compass-ui {
+            position: absolute;
+            top: 20px; right: 20px; z-index: 10;
+            background: rgba(20, 15, 10, 0.95); padding: 12px 18px; border-radius: 6px;
+            border: 2px solid #8B6914; color: #DAA520;
+            font-family: "Times New Roman", Times, serif, "MS Mincho", "Hiragino Mincho ProN", serif;
+            font-weight: bold; font-size: 15px; text-align: center;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.7), inset 0 0 10px rgba(139,105,20,0.4);
+            letter-spacing: 1px;
+        }
+    </style>
+    
+    <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <script src="https://unpkg.com/three@0.147.0/examples/js/objects/Water.js"></script>
+    <script src="https://unpkg.com/three@0.147.0/examples/js/objects/Sky.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="crosshair"></div>
+    <div id="compass-ui">COMPASS: N (0°)</div>
+
+    <div class="ui-panel" id="main-ui-panel">
+        <h1>帆船 海流丸 シミュレータ</h1>
+        
+        <div id="ui-target-display" class="target-indicator">対象：なし (移動・探索中)</div>
+
+        <div class="control-group">
+            <label>ZIPファイルを選択</label>
+            <input type="file" id="file-input" accept=".zip">
+        </div>
+
+        <div class="status" id="load-status">ZIPファイルを読み込んでください</div>
+        <div id="cam-status-board" class="cam-status" style="display:none;">視点：俯瞰カメラ</div>
+
+        <div class="telegraph-monitor">
+            <h2>Telegraph Indicators (状態出力)</h2>
+            <div class="tg-row" id="monitor-t4_L"><span class="tg-name">左1 (左側)</span><span class="tg-val" id="val-t4_L">-</span></div>
+            <div class="tg-row" id="monitor-t4_R"><span class="tg-name">左1 (右側)</span><span class="tg-val" id="val-t4_R">-</span></div>
+         
+            <div class="tg-row" id="monitor-t3_L"><span class="tg-name">左2 (左側)</span><span class="tg-val" id="val-t3_L">-</span></div>
+            <div class="tg-row" id="monitor-t3_R"><span class="tg-name">左2 (右側)</span><span class="tg-val" id="val-t3_R">-</span></div>
+            
+            <div class="tg-row" id="monitor-t5_L"><span class="tg-name">左3 (左側)</span><span class="tg-val" id="val-t5_L">-</span></div>
+            <div class="tg-row" id="monitor-t5_R"><span class="tg-name">左3 (右側)</span><span class="tg-val" id="val-t5_R">-</span></div>
+            
+            <div class="tg-row" id="monitor-t2_L"><span class="tg-name">右1 (左側)</span><span class="tg-val" id="val-t2_L">-</span></div>
+            <div class="tg-row" id="monitor-t2_R"><span class="tg-name">右1 (右側)</span><span class="tg-val" id="val-t2_R">-</span></div>
+            
+            <div class="tg-row" id="monitor-t1_L"><span class="tg-name">右2 (左側)</span><span class="tg-val" id="val-t1_L">-</span></div>
+            <div class="tg-row" id="monitor-t1_R"><span class="tg-name">右2 (右側)</span><span class="tg-val" id="val-t1_R">-</span></div>
+        </div>
+
+        <div class="guide-box">
+            <strong>🚶 操作ガイド</strong>
+            <ul>
+                <li><strong>「3」キー</strong>：甲板歩行視点の開始/解除</li>
+                <li><strong>狙って【E】キー</strong>：選択している機器の操船開始/解除</li>
+                <li><strong>操船中</strong>：舵輪(A/D) / テレグラフ(W/S)</li>
+                <li><strong>【Enter】キー</strong>：大型船の汽笛を鳴らす</li>
+                <li><strong>【T】キー</strong>：天候と波の高さをランダムに変更</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let audioCtx = null;
+        let whistleBuffer = null;
+        let bellBuffer = null;
+
+        let wakiriObjects = [];
+        let wakeGenObjects = [];
+
+        function playTelegraphBell() {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                
+                if (bellBuffer) {
+                    const source = audioCtx.createBufferSource();
+                    source.buffer = bellBuffer;
+                    source.connect(audioCtx.destination);
+                    source.start(0);
+                } else {
+                    const now = audioCtx.currentTime;
+                    const freqs = [1200, 1850, 2400];
+                    freqs.forEach((f, idx) => {
+                        const osc = audioCtx.createOscillator();
+                        const gainNode = audioCtx.createGain();
+                        osc.type = 'sine'; osc.frequency.setValueAtTime(f, now);
+                        gainNode.gain.setValueAtTime(idx === 0 ? 0.25 : 0.12, now);
+                        gainNode.gain.exponentialRampToValueAtTime(0.0001, now + (idx === 0 ? 0.8 : 0.4));
+                        osc.connect(gainNode); gainNode.connect(audioCtx.destination);
+                        osc.start(now); osc.stop(now + 0.8);
+                    });
+                }
+            } catch(e) { console.log("Audio Error", e); }
+        }
+
+        function playWhistle() {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                if (whistleBuffer) {
+                    const source = audioCtx.createBufferSource();
+                    source.buffer = whistleBuffer;
+                    source.connect(audioCtx.destination);
+                    source.start(0);
+                } else {
+                    const now = audioCtx.currentTime;
+                    const freqs = [110, 137.5, 165]; 
+                    const duration = 2.5;
+                    freqs.forEach((f, idx) => {
+                        const osc = audioCtx.createOscillator();
+                        const gainNode = audioCtx.createGain();
+                        osc.type = idx === 0 ? 'sawtooth' : 'triangle';
+                        osc.frequency.setValueAtTime(f, now);
+                        gainNode.gain.setValueAtTime(0, now);
+                        gainNode.gain.linearRampToValueAtTime(0.15, now + 0.2);
+                        gainNode.gain.setValueAtTime(0.15, now + duration - 0.4);
+                        gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+                        osc.connect(gainNode); gainNode.connect(audioCtx.destination);
+                        osc.start(now); osc.stop(now + duration);
+                    });
+                }
+            } catch(e) { console.log("Whistle Audio Error", e); }
+        }
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f1115);
+
+        scene.fog = null;
+
+        function ColorWithFogControl(hex) {
+            return new THREE.Color(hex);
+        }
+
+        const defaultCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000000);
+        defaultCamera.position.set(10, 10, 10);
+        let activeCamera = defaultCamera; let fileCamera = null;
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        container.appendChild(renderer.domElement);
+        const controls = new THREE.OrbitControls(defaultCamera, renderer.domElement);
+        controls.enableDamping = true;
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2); scene.add(ambientLight);
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5); scene.add(hemiLight);
+        const dirLight = new THREE.DirectionalLight(0xfffaed, 0.6); dirLight.position.set(30, 40, 20); scene.add(dirLight);
+        const gridHelper = new THREE.GridHelper(50, 50, 0x334155, 0x1e293b); scene.add(gridHelper);
+
+        const sun = new THREE.Vector3();
+        const sky = new THREE.Sky();
+        sky.scale.setScalar(1000000);
+        scene.add(sky);
+
+        const skyUniforms = sky.material.uniforms;
+        skyUniforms['turbidity'].value = 10;
+        skyUniforms['rayleigh'].value = 2;
+        skyUniforms['mieCoefficient'].value = 0.005;
+        skyUniforms['mieDirectionalG'].value = 0.8;
+
+        const elevation = 15; 
+        const azimuth = 180;  
+        const phi = THREE.MathUtils.degToRad(90 - elevation);
+        const theta = THREE.MathUtils.degToRad(azimuth);
+        sun.setFromSphericalCoords(1, phi, theta);
+        sky.material.uniforms['sunPosition'].value.copy(sun);
+        dirLight.position.copy(sun).multiplyScalar(100);
+
+        const starsGeometry = new THREE.BufferGeometry();
+        const starsCount = 2000;
+        const starPositions = new Float32Array(starsCount * 3);
+        for(let i = 0; i < starsCount * 3; i += 3) {
+            const u = Math.random();
+            const v = Math.random();
+            const thetaStar = u * 2.0 * Math.PI;
+            const phiStar = Math.acos(2.0 * v - 1.0);
+            const rStar = 800000;
+            starPositions[i] = rStar * Math.sin(phiStar) * Math.cos(thetaStar);
+            starPositions[i+1] = rStar * Math.sin(phiStar) * Math.sin(thetaStar);
+            starPositions[i+2] = rStar * Math.cos(phiStar);
+        }
+        starsGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+        const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 200, transparent: true, opacity: 0 });
+        const starField = new THREE.Points(starsGeometry, starsMaterial);
+        scene.add(starField);
+
+        const cloudsGroup = new THREE.Group();
+        scene.add(cloudsGroup);
+        const cloudCount = 35;
+        for (let i = 0; i < cloudCount; i++) {
+            const cloudSubGroup = new THREE.Group();
+            const blobCount = 5 + Math.floor(Math.random() * 8);
+            for (let j = 0; j < blobCount; j++) {
+                const radius = 3000 + Math.random() * 5000;
+                const geom = new THREE.SphereGeometry(radius, 7, 7);
+                const material = new THREE.MeshBasicMaterial({
+                    color: 0xffffff,
+                    transparent: true,
+                    opacity: 0.35,
+                    depthWrite: false
+                });
+                const blob = new THREE.Mesh(geom, material);
+                blob.position.set(
+                    (Math.random() - 0.5) * 12000,
+                    (Math.random() - 0.5) * 1500,
+                    (Math.random() - 0.5) * 12000
+                );
+                cloudSubGroup.add(blob);
+            }
+            cloudSubGroup.position.set(
+                (Math.random() - 0.5) * 400000,
+                80000 + Math.random() * 40000,
+                (Math.random() - 0.5) * 400000
+            );
+            cloudsGroup.add(cloudSubGroup);
+        }
+
+        const waterGeometry = new THREE.PlaneGeometry(1000000, 1000000, 128, 128);
+        const water = new THREE.Water(
+            waterGeometry,
+            {
+                textureWidth: 512,
+                textureHeight: 512,
+                waterNormals: new THREE.TextureLoader().load('https://threejs.org/examples/textures/waternormals.jpg', function(texture) {
+                    texture.wrapS = THREE.RepeatWrapping;
+                    texture.wrapT = THREE.RepeatWrapping;
+                }),
+                sunDirection: dirLight.position.clone().normalize(),
+                sunColor: 0xffffff,
+                waterColor: 0x001e0f,
+                distortionScale: 3.7,
+                fog: false
+            }
+        );
+        water.rotation.x = -Math.PI / 2;
+        water.position.y = 101.553; 
+        scene.add(water);
+
+        const wakeParticlesCount = 300;
+        const wakeGeometry = new THREE.BufferGeometry();
+        const wakePositions = new Float32Array(wakeParticlesCount * 3);
+        const wakeScales = new Float32Array(wakeParticlesCount);
+        for(let i=0; i<wakeParticlesCount; i++) {
+            wakePositions[i*3] = 0;
+            wakePositions[i*3+1] = -1000;
+            wakePositions[i*3+2] = 0;
+            wakeScales[i] = 0;
+        }
+        wakeGeometry.setAttribute('position', new THREE.BufferAttribute(wakePositions, 3));
+        const wakeMaterial = new THREE.PointsMaterial({
+            color: 0xffffff,
+            size: 4.0,
+            transparent: true,
+            opacity: 0.4,
+            depthWrite: false,
+            blending: THREE.NormalBlending
+        });
+        const wakeParticles = new THREE.Points(wakeGeometry, wakeMaterial);
+        scene.add(wakeParticles);
+        let wakeHistory = [];
+
+        let currentWeather = "晴れ";
+        let waveHeightMultiplier = 1.0;
+        const waterOriginalPositions = waterGeometry.attributes.position.array.slice();
+
+        let weatherParticles = null;
+        function updateWeatherSystem(weatherType) {
+            currentWeather = weatherType;
+            if (weatherParticles) {
+                scene.remove(weatherParticles);
+                weatherParticles.geometry.dispose();
+                weatherParticles.material.dispose();
+                weatherParticles = null;
+            }
+
+            if (weatherType === "快晴") {
+                skyUniforms['turbidity'].value = 2;
+                skyUniforms['rayleigh'].value = 0.3;
+                dirLight.intensity = 0.8;
+                ambientLight.intensity = 0.3;
+            } else if (weatherType === "晴れ") {
+                skyUniforms['turbidity'].value = 10;
+                skyUniforms['rayleigh'].value = 0.8;
+                dirLight.intensity = 0.6;
+                ambientLight.intensity = 0.2;
+            } else if (weatherType === "曇り") {
+                skyUniforms['turbidity'].value = 25;
+                skyUniforms['rayleigh'].value = 1.5;
+                dirLight.intensity = 0.3;
+                ambientLight.intensity = 0.25;
+            } else if (weatherType === "雨" || weatherType === "雪") {
+                skyUniforms['turbidity'].value = 35;
+                skyUniforms['rayleigh'].value = 2.0;
+                dirLight.intensity = 0.15;
+                ambientLight.intensity = 0.15;
+
+                const count = 15000;
+                const geometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(count * 3);
+                for (let i = 0; i < count * 3; i += 3) {
+                    positions[i] = (Math.random() - 0.5) * 5000;
+                    positions[i+1] = Math.random() * 400;
+                    positions[i+2] = (Math.random() - 0.5) * 5000;
+                }
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                const material = new THREE.PointsMaterial({
+                    color: weatherType === "雨" ? 0xaaaaaa : 0xffffff,
+                    size: (weatherType === "雨" ? 1.5 : 2.5) * 0.01,
+                    transparent: true,
+                    opacity: 0.6
+                });
+                weatherParticles = new THREE.Points(geometry, material);
+                scene.add(weatherParticles);
+            }
+        }
+
+        function setRandomWeatherAndWaves() {
+            let weathers = ["快晴", "晴れ", "曇り", "雨", "雪"];
+            if (isNightTime) {
+                weathers = ["曇り", "雨", "晴れ"];
+            }
+            const randomWeather = weathers[Math.floor(Math.random() * weathers.length)];
+            waveHeightMultiplier = 0.2 + Math.random() * 2.8;
+            updateWeatherSystem(randomWeather);
+        }
+
+        setInterval(function() {
+            setRandomWeatherAndWaves();
+        }, 120000);
+
+        let model = null; let isWalkMode = false;
+        let isClimbingMode = false; let activeLadderBox = null;
+        let isSteeringMode = false; let activeTelegraphKey = null;
+        const doorSystem = {
+            starboard: { parts: ["empty_1757", "empty_1758", "empty_1756", "empty_1755"], objects: [], initialMatrices: [], hingePoint: null, isOpen: false, targetRad: 0, currentRad: 0 },
+            portside:  { parts: ["empty_2593", "empty_2592", "empty_2590", "empty_2591"], objects: [], initialMatrices: [], hingePoint: null, isOpen: false, targetRad: 0, currentRad: 0 },
+            door1:     { parts: ["empty_1525", "empty_1524", "empty_1530", "empty_1527", "empty_1529", "empty_1526"], objects: [], initialMatrices: [], hingePoint: null, isOpen: false, targetRad: 0, currentRad: 0 }
+        };
+        let sharedRad = 0; 
+        let steeringVelocity = 0; // 舵輪の慣性用速度
+        let rudderCurrentRad = 0;  // 舵の慣性用現在角
+        let rudderVelocity = 0;    // 舵の慣性用速度
+
+        const MAX_STEERING_TURNS = 3.5; 
+        const MAX_STEERING_RAD = Math.PI * 2 * MAX_STEERING_TURNS;
+        const steeringSystem = { parts: ["empty_2152", "empty_2153", "empty_2159", "empty_2155", "empty_2158", "empty_2156", "empty_2157", "empty_2160", "empty_2161", "empty_2162", "empty_2154"], objects: [], initialMatrices: [], centerPoint: null };
+        const steeringSystem2 = { parts: ["empty_2382", "empty_2385", "empty_2390", "empty_2386", "empty_2392", "empty_2384", "empty_2388", "empty_2389", "empty_2383", "empty_2387", "empty_2391", "empty_2397"], objects: [], initialMatrices: [], centerPoint: null };
+        const rudderSystem = { parts: ["empty_1891"], objects: [], initialMatrices: [], centerPoint: null };
+        
+        const screwSystem = {
+            sc1_R: { axisPart: "empty_367", parts: ["empty_371","empty_369","empty_373","empty_367","empty_368","empty_370","empty_372"], objects: [], initialMatrices: [], centerPoint: null, currentRad: 0, currentSpeed: 0, speedFactor: 0, stopTimer: 0 },
+            sc2_C: { axisPart: "empty_340", parts: ["empty_340","empty_342","empty_344","empty_346","empty_348","empty_347","empty_345","empty_343","empty_341"], objects: [], initialMatrices: [], centerPoint: null, currentRad: 0, currentSpeed: 0, speedFactor: 0, stopTimer: 0 },
+            sc3_L: { axisPart: "empty_26", parts: ["empty_26","empty_32","empty_30","empty_29","empty_27","empty_31","empty_28"], objects: [], initialMatrices: [], centerPoint: null, currentRad: 0, currentSpeed: 0, speedFactor: 0, stopTimer: 0 }
+        };
+        const telegraphSystem = {
+            t4_L: { uiName: "左1 (左側)", dialPart: "empty_1027", leverParts: ["empty_1041", "empty_1040", "empty_1039"], arrowParts: ["empty_1024"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t4_R: { uiName: "左1 (右側)", dialPart: "empty_1020", leverParts: ["empty_1043", "empty_1042", "empty_1044"], arrowParts: ["empty_1023"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t3_L: { uiName: "左2 (左側)", dialPart: "empty_2008", leverParts: ["empty_2014", "empty_2013", "empty_2015"], arrowParts: ["empty_2010"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t3_R: { uiName: "左2 (右側)", dialPart: "empty_2007", leverParts: ["empty_2020", "empty_2022", "empty_2021"], arrowParts: ["empty_2011"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t5_L: { uiName: "左3 (左側)", dialPart: "empty_2065", leverParts: ["empty_2078", "empty_2080", "empty_2079"], arrowParts: ["empty_2066"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t5_R: { uiName: "左3 (右側)", dialPart: "empty_2065", leverParts: ["empty_2075", "empty_2074", "empty_2076"], arrowParts: ["empty_2067"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t2_L: { uiName: "右1 (左側)", dialPart: "empty_946",  leverParts: ["empty_958",  "empty_960",  "empty_959" ], arrowParts: ["empty_943"],  leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t2_R: { uiName: "右1 (右側)", dialPart: "empty_939",  leverParts: ["empty_962",  "empty_961",  "empty_963" ], arrowParts: ["empty_942"],  leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t1_L: { uiName: "右2 (左側)", dialPart: "empty_1870", leverParts: ["empty_1882", "empty_1884", "empty_1883"], arrowParts: ["empty_1873"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 },
+            t1_R: { uiName: "右2 (右側)", dialPart: "empty_1869", leverParts: ["empty_1877", "empty_1875", "empty_1876"], arrowParts: ["empty_1872"], leverObjects: [], arrowObjects: [], initialLeverMatrices: [], initialArrowMatrices: [], centerPoint: null, currentLeverRad: 0, currentArrowRad: 0, lastGear: 5 }
+        };
+        const moveState = { forward: false, backward: false, left: false, right: false };
+        const lookState = { up: false, down: false, left: false, right: false };
+        const moveSpeed = 1.20;
+        const lookSpeed = 0.02; let pitch = 0; let yaw = 0; let ladderObjects = [];
+        let smokeSources = []; let smokeParticles = []; const MAX_SMOKE_PARTICLES = 120;
+        let isLEmissiveOn = false; let isKEmissiveOn = false;
+        let isEnterPressed = false;
+
+        const mainUiPanel = document.getElementById('main-ui-panel');
+        const camStatusBoard = document.getElementById('cam-status-board');
+        const crosshair = document.getElementById('crosshair');
+        const uiTargetDisplay = document.getElementById('ui-target-display');
+        const compassUi = document.getElementById('compass-ui');
+        
+        const GEAR_LABELS = [
+            "全速前進 (AHEAD FULL)", "半速前進 (HALF)", "緩速前進 (SLOW)", "微速前進 (AHEAD DEAD SLOW)", "注意 (ATTENTION)",
+            "停止 (STOP)",
+            "用意 (STAND BY)", "微速後進 (DEAD SLOW)", "緩速後進 (SLOW)", "半速後進 (HALF)", "全速後進 (ASTERN FULL)"
+        ];
+
+        function toggleCameraView() {
+            if (!fileCamera) return;
+            isWalkMode = !isWalkMode;
+            if (isWalkMode) {
+                activeCamera = fileCamera;
+                controls.enabled = false;
+                const euler = new THREE.Euler(0, 0, 0, 'YXZ').setFromQuaternion(fileCamera.quaternion);
+                yaw = euler.y; pitch = euler.x;
+                camStatusBoard.innerText = "視点：甲板歩行";
+                camStatusBoard.classList.add('active'); crosshair.style.display = 'block';
+            } else {
+                activeCamera = defaultCamera;
+                controls.enabled = true;
+                camStatusBoard.innerText = "視点：俯瞰カメラ"; camStatusBoard.classList.remove('active'); crosshair.style.display = 'none';
+                isClimbingMode = false; activeLadderBox = null; isSteeringMode = false; activeTelegraphKey = null;
+                Object.keys(moveState).forEach(k => moveState[k] = false); Object.keys(lookState).forEach(k => lookState[k] = false);
+            }
+        }
+
+        function checkLadderUnderCrosshair() {
+            if (!fileCamera || ladderObjects.length === 0) return null;
+            const ray = new THREE.Raycaster(fileCamera.position, new THREE.Vector3(0, 0, -1).applyQuaternion(fileCamera.quaternion).normalize(), 0, 45.0);
+            for (let ladder of ladderObjects) { if (ray.intersectObject(ladder, true).length > 0) return ladder; }
+            return null;
+        }
+
+        function checkDoorUnderCrosshair() {
+            if (!fileCamera) return null;
+            const ray = new THREE.Raycaster(fileCamera.position, new THREE.Vector3(0, 0, -1).applyQuaternion(fileCamera.quaternion).normalize(), 0, 25.0);
+            for (let key in doorSystem) { for (let obj of doorSystem[key].objects) { if (ray.intersectObject(obj, true).length > 0) return key; } }
+            return null;
+        }
+
+        function checkSteeringUnderCrosshair() {
+            if (!fileCamera) return false;
+            const ray = new THREE.Raycaster(fileCamera.position, new THREE.Vector3(0, 0, -1).applyQuaternion(fileCamera.quaternion).normalize(), 0, 25.0);
+            for (let obj of steeringSystem.objects) { if (ray.intersectObject(obj, true).length > 0) return true; }
+            for (let obj of steeringSystem2.objects) { if (ray.intersectObject(obj, true).length > 0) return true; }
+            return false;
+        }
+
+        function checkTelegraphUnderCrosshair() {
+            if (!fileCamera) return null;
+            const ray = new THREE.Raycaster(fileCamera.position, new THREE.Vector3(0, 0, -1).applyQuaternion(fileCamera.quaternion).normalize(), 0, 25.0);
+            for (let key in telegraphSystem) {
+                for (let obj of telegraphSystem[key].leverObjects) { if (ray.intersectObject(obj, true).length > 0) return key; }
+                for (let obj of telegraphSystem[key].arrowObjects) { if (ray.intersectObject(obj, true).length > 0) return key; }
+            }
+            return null;
+        }
+
+        window.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { 
+                if (!isEnterPressed) {
+                    isEnterPressed = true;
+                    playWhistle(); 
+                }
+                return; 
+            }
+            if (e.key === 't' || e.key === 'T') { setRandomWeatherAndWaves(); return; }
+
+            if (e.key === 'l' || e.key === 'L') {
+                if (model) {
+                    isLEmissiveOn = !isLEmissiveOn;
+                    model.traverse(node => {
+                        if (node.isMesh && (node.name === 'empty_2413' || node.name === 'empty_2406')) {
+                            const mats = Array.isArray(node.material) ? node.material : [node.material];
+                            mats.forEach(mat => { if (mat.emissive) mat.emissive.setHex(isLEmissiveOn ? 0xffff00 : 0x000000); });
+                        }
+                    });
+                }
+            }
+            if (e.key === 'k' || e.key === 'K') {
+                if (model) {
+                    isKEmissiveOn = !isKEmissiveOn;
+                    model.traverse(node => {
+                        if (node.isMesh) {
+                            if (node.name === 'empty_1850') {
+                                const mats = Array.isArray(node.material) ? node.material : [node.material];
+                                mats.forEach(mat => { if (mat.emissive) mat.emissive.setHex(isKEmissiveOn ? 0x00ff00 : 0x000000); });
+                            }
+                            if (node.name === 'empty_1787') {
+                                const mats = Array.isArray(node.material) ? node.material : [node.material];
+                                mats.forEach(mat => { if (mat.emissive) mat.emissive.setHex(isKEmissiveOn ? 0xff0000 : 0x000000); });
+                            }
+                        }
+                    });
+                }
+            }
+
+            if (e.key === '3') { toggleCameraView(); return; }
+
+            if (isWalkMode) {
+                if (isSteeringMode) {
+                    if (e.key === 'a' || e.key === 'A') moveState.left = true;
+                    if (e.key === 'd' || e.key === 'D') moveState.right = true;
+                    if (e.key === 'e' || e.key === 'E') { isSteeringMode = false; Object.keys(moveState).forEach(k => moveState[k] = false); }
+                    return;
+                }
+                if (activeTelegraphKey) {
+                    if (e.key === 'w' || e.key === 'W') moveState.forward = true;
+                    if (e.key === 's' || e.key === 'S') moveState.backward = true;
+                    if (e.key === 'e' || e.key === 'E') { activeTelegraphKey = null; Object.keys(moveState).forEach(k => moveState[k] = false); }
+                    return;
+                }
+
+                if (e.key === 'w' || e.key === 'W') moveState.forward = true;
+                if (e.key === 's' || e.key === 'S') moveState.backward = true;
+                if (e.key === 'a' || e.key === 'A') moveState.left = true;
+                if (e.key === 'd' || e.key === 'D') moveState.right = true;
+                if (e.key === 'ArrowUp')    lookState.up = true;
+                if (e.key === 'ArrowDown')  lookState.down = true;
+                if (e.key === 'ArrowLeft')  lookState.left = true;
+                if (e.key === 'ArrowRight') lookState.right = true;
+                if (e.key === 'e' || e.key === 'E') {
+                    if (checkSteeringUnderCrosshair()) { isSteeringMode = true; Object.keys(moveState).forEach(k => moveState[k] = false); Object.keys(lookState).forEach(k => lookState[k] = false); return; }
+                    const aimedTelegraph = checkTelegraphUnderCrosshair();
+                    if (aimedTelegraph) { 
+                        activeTelegraphKey = aimedTelegraph; 
+                        Object.keys(moveState).forEach(k => moveState[k] = false); 
+                        Object.keys(lookState).forEach(k => lookState[k] = false); 
+                        if (!audioCtx) playTelegraphBell(); 
+                        return; 
+                    }
+                    const aimedDoorKey = checkDoorUnderCrosshair();
+                    if (aimedDoorKey) { const d = doorSystem[aimedDoorKey]; d.isOpen = !d.isOpen; d.targetRad = d.isOpen ? Math.PI / 2 : 0; return; }
+                    if (isClimbingMode) { isClimbingMode = false; activeLadderBox = null; } 
+                    else { const targetLadder = checkLadderUnderCrosshair(); if (targetLadder) { isClimbingMode = true; activeLadderBox = new THREE.Box3().setFromObject(targetLadder); } }
+                }
+            }
+        });
+        window.addEventListener('keyup', function(e) {
+            if (e.key === 'Enter') { isEnterPressed = false; return; }
+            if (e.key === 'w' || e.key === 'W') moveState.forward = false;
+            if (e.key === 's' || e.key === 'S') moveState.backward = false;
+            if (e.key === 'a' || e.key === 'A') moveState.left = false;
+            if (e.key === 'd' || e.key === 'D') moveState.right = false;
+            if (e.key === 'ArrowUp')    lookState.up = false;
+            if (e.key === 'ArrowDown')  lookState.down = false;
+            if (e.key === 'ArrowLeft')  lookState.left = false;
+            if (e.key === 'ArrowRight') lookState.right = false;
+        });
+        
+        const PLAYER_HEIGHT = 14.0;
+        let verticalVelocity = 0; const GRAVITY = 0.008;
+        
+        function updatewalkAndLookDirect() {}
+
+        function updateWalkAndLook() {
+            if (!isWalkMode || !fileCamera || !model) return;
+            
+            if (isSteeringMode) {
+                const totalDeg = Math.round(sharedRad * (180 / Math.PI));
+                const turns = Math.floor(Math.abs(totalDeg) / 360);
+                const remainDeg = Math.abs(totalDeg) % 360;
+                const dirStr = totalDeg > 0 ? "面舵 (右)" : totalDeg < 0 ? "取舵 (左)" : "中央";
+                uiTargetDisplay.innerText = `操船中：主舵輪 [${dirStr} ${totalDeg === 0 ? "" : `${turns}周と ${remainDeg}°`}]`;
+                uiTargetDisplay.className = "target-indicator steering";
+                crosshair.style.backgroundColor = "#10b981"; crosshair.style.boxShadow = "0 0 8px #10b981";
+                return;
+            } else if (activeTelegraphKey) {
+                uiTargetDisplay.innerText = `操船中：テレグラフ ${telegraphSystem[activeTelegraphKey].uiName} (操作中)`;
+                uiTargetDisplay.className = "target-indicator active";
+                crosshair.style.backgroundColor = "#f59e0b"; crosshair.style.boxShadow = "0 0 8px #f59e0b";
+                return;
+            }
+
+            let currentAimText = "対象：なし (移動・探索中)";
+            uiTargetDisplay.className = "target-indicator";
+            if (checkSteeringUnderCrosshair()) { currentAimText = "捕捉：主舵輪 (【E】で操作開始)"; crosshair.style.backgroundColor = "#34d399"; crosshair.style.boxShadow = "0 0 8px #34d399"; } 
+            else {
+                const aimedTG = checkTelegraphUnderCrosshair();
+                if (aimedTG) { currentAimText = `捕捉：テレグラフ ${telegraphSystem[aimedTG].uiName} (【E】で操作開始)`; crosshair.style.backgroundColor = "#fbbf24"; crosshair.style.boxShadow = "0 0 8px #fbbf24"; } 
+                else if (checkDoorUnderCrosshair()) { currentAimText = "捕捉：水密扉 (【E】で開閉)"; crosshair.style.backgroundColor = "#38bdf8"; crosshair.style.boxShadow = "0 0 8px #38bdf8"; } 
+                else if (checkLadderUnderCrosshair()) { currentAimText = "捕捉：昇降ラダー (【E】で昇降開始)"; crosshair.style.backgroundColor = "#eab308"; crosshair.style.boxShadow = "0 0 8px #eab308"; } 
+                else { crosshair.style.backgroundColor = "#00ffcc"; crosshair.style.boxShadow = "0 0 8px #00ffcc"; }
+            }
+            uiTargetDisplay.innerText = currentAimText;
+
+            if (lookState.left)  yaw += lookSpeed;
+            if (lookState.right) yaw -= lookSpeed;
+            if (lookState.up)    pitch += lookSpeed;
+            if (lookState.down)  pitch -= lookSpeed;
+            pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, pitch));
+            fileCamera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+            
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(fileCamera.quaternion); forward.y = 0; forward.normalize();
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(fileCamera.quaternion); right.y = 0; right.normalize();
+            const moveVector = new THREE.Vector3();
+
+            if (isClimbingMode) {
+                if (moveState.forward) moveVector.y += 0.8;
+                if (moveState.backward) moveVector.y -= 0.8;
+                if (moveState.left) moveVector.addScaledVector(right, -0.2); if (moveState.right) moveVector.addScaledVector(right, 0.2);
+            } else {
+                if (moveState.forward) moveVector.add(forward);
+                if (moveState.backward) moveVector.addScaledVector(forward, -1);
+                if (moveState.left) moveVector.addScaledVector(right, -1); if (moveState.right) moveVector.add(right);
+            }
+
+            let nextPosition = fileCamera.position.clone();
+            if (isClimbingMode) { if (moveVector.lengthSq() > 0) { moveVector.y *= moveSpeed; nextPosition.add(moveVector); } verticalVelocity = 0; } 
+            else {
+                if (moveVector.lengthSq() > 0) {
+                    moveVector.normalize();
+                    const checkDir = moveVector.clone();
+                    const wallRay = new THREE.Raycaster(fileCamera.position.clone().setY(fileCamera.position.y - PLAYER_HEIGHT + 4.0), checkDir, 0, 3.5);
+                    if (wallRay.intersectObject(model, true).length > 0) {
+                        moveVector.set(0, 0, 0);
+                    }
+                    nextPosition.add(moveVector.multiplyScalar(moveSpeed));
+                }
+            }
+
+            if (!isClimbingMode) {
+                const rayOrigin = nextPosition.clone().setY(nextPosition.y - PLAYER_HEIGHT + 4.0);
+                const downRay = new THREE.Raycaster(rayOrigin, new THREE.Vector3(0, -1, 0), 0, 40.0);
+                const intersects = downRay.intersectObject(model, true);
+                let floorIntersect = null;
+                for (let hit of intersects) { if (hit.object && hit.object.name && !hit.object.name.includes("empty_")) { floorIntersect = hit; break; } }
+                if (!floorIntersect && intersects.length > 0) floorIntersect = intersects[0];
+                if (floorIntersect) {
+                    const targetY = floorIntersect.point.y + PLAYER_HEIGHT;
+                    if (fileCamera.position.y > targetY) { verticalVelocity -= GRAVITY; fileCamera.position.y += verticalVelocity; if (fileCamera.position.y < targetY) { fileCamera.position.y = targetY; verticalVelocity = 0; } } 
+                    else { fileCamera.position.y = targetY; verticalVelocity = 0; }
+                } else { verticalVelocity -= GRAVITY; fileCamera.position.y += verticalVelocity; }
+            } else {
+                const floorHits = new THREE.Raycaster(nextPosition, new THREE.Vector3(0, -1, 0)).intersectObject(model, true);
+                let minAllowedY = floorHits.length > 0 ? floorHits[0].point.y + PLAYER_HEIGHT : -999;
+                if (moveState.forward && activeLadderBox && nextPosition.y > (activeLadderBox.max.y + PLAYER_HEIGHT - 3.5)) { fileCamera.position.y = activeLadderBox.max.y + PLAYER_HEIGHT + 0.5; nextPosition.addScaledVector(forward, 2.5); isClimbingMode = false; activeLadderBox = null; } 
+                else { fileCamera.position.y = Math.max(minAllowedY, nextPosition.y); }
+            }
+            fileCamera.position.x = nextPosition.x; fileCamera.position.z = nextPosition.z;
+        }
+
+        function getTelegraphGear(rad) {
+            const minRad = -2.1; const maxRad = 2.1;
+            const normalized = (rad - minRad) / (maxRad - minRad);
+            return THREE.MathUtils.clamp(Math.round(normalized * 10), 0, 10);
+        }
+
+        let lastTime = performance.now();
+        let dayTimeCounter = 0;
+        let isNightTime = false;
+
+        let currentFogInstance = null;
+        let icebergMesh = null;
+        let icebergGeneratedThisNight = false;
+        let isCollidedWithIceberg = false;
+        let icebergSinkingProgress = 0;
+
+        function updateAnimatedObjects() {
+            const nowTime = performance.now();
+            const deltaTime = (nowTime - lastTime) / 1000; lastTime = nowTime;
+
+            dayTimeCounter += deltaTime;
+            const dayCycleDuration = 840;
+            const timeRatio = (dayTimeCounter % dayCycleDuration) / dayCycleDuration;
+            const sunAngle = timeRatio * Math.PI * 2;
+            
+            const sunDistance = 400000;
+            const sunX = Math.cos(sunAngle) * sunDistance;
+            const sunY = Math.sin(sunAngle) * sunDistance;
+            sun.set(sunX, sunY, 100000);
+            sky.material.uniforms['sunPosition'].value.copy(sun);
+            dirLight.position.copy(sun).normalize().multiplyScalar(100);
+
+            let camWorldPos = new THREE.Vector3();
+            activeCamera.getWorldPosition(camWorldPos);
+            let waterSurfaceY = water.position.y;
+
+            if (camWorldPos.y < waterSurfaceY) {
+                let depthBelowWater = waterSurfaceY - camWorldPos.y;
+                let fogDensity = Math.min(1.0, 0.05 + depthBelowWater * 0.005);
+                let fogColorVal = new THREE.Color(0x001e0f).lerp(new THREE.Color(0x000508), Math.min(1.0, depthBelowWater / 100.0));
+                scene.fog = new THREE.FogExp2(fogColorVal, fogDensity);
+                renderer.setClearColor(fogColorVal);
+            } else {
+                if (isNightTime && currentFogInstance) {
+                    scene.fog = currentFogInstance;
+                    renderer.setClearColor(0x0f1115);
+                } else {
+                    scene.fog = null;
+                    renderer.setClearColor(0x0f1115);
+                }
+            }
+
+            let camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(activeCamera.quaternion);
+            let angleDeg = Math.atan2(camDir.x, camDir.z) * (180 / Math.PI);
+            if (angleDeg < 0) angleDeg += 360;
+            let compassDeg = Math.round(angleDeg);
+            const points32 = ["N", "NbyE", "NNE", "NEbyN", "NE", "NEbyE", "ENE", "EbyN", "E", "EbyS", "ESE", "SEbyE", "SE", "SEbyS", "SSE", "SbyE", "S", "SbyW", "SSW", "SWbyS", "SW", "SWbyW", "WSW", "WbyS", "W", "WbyN", "WNW", "NWbyW", "NW", "NWbyN", "NNW", "NbyW"];
+            let idx32 = Math.round(angleDeg / 11.25) % 32;
+            let compassText = points32[idx32];
+            compassUi.innerText = `COMPASS: ${compassText} (${compassDeg}°)`;
+
+            if (sunY < 0) {
+                isNightTime = true;
+                dirLight.intensity = 0.05;
+                ambientLight.intensity = 0.05;
+                starField.material.opacity = Math.min(1.0, starField.material.opacity + deltaTime * 0.5);
+                
+                if (!icebergGeneratedThisNight && Math.random() < 0.02) {
+                    scene.fog = new THREE.FogExp2(0x8899aa, 1.0 / 1000000);
+                    currentFogInstance = scene.fog;
+                    icebergGeneratedThisNight = true;
+
+                    let shipPos = new THREE.Vector3();
+                    let group21Ref = scene.getObjectByName("21");
+                    if (group21Ref) group21Ref.getWorldPosition(shipPos);
+                    else shipPos.copy(camWorldPos);
+
+                    let icebergGeo = new THREE.DodecahedronGeometry(15000, 2);
+                    let icebergMat = new THREE.MeshStandardMaterial({ color: 0xddeeff, roughness: 0.2, metalness: 0.1 });
+                    icebergMesh = new THREE.Mesh(icebergGeo, icebergMat);
+                    icebergMesh.position.set(shipPos.x + 50000, water.position.y, shipPos.z);
+                    scene.add(icebergMesh);
+                }
+
+                if (icebergMesh) {
+                    let shipPos = new THREE.Vector3();
+                    let group21Ref = scene.getObjectByName("21");
+                    if (group21Ref) group21Ref.getWorldPosition(shipPos);
+                    else shipPos.copy(camWorldPos);
+
+                    if (!isCollidedWithIceberg && shipPos.distanceTo(icebergMesh.position) < 20000) {
+                        isCollidedWithIceberg = true;
+                    }
+
+                    if (isCollidedWithIceberg) {
+                        icebergSinkingProgress += deltaTime * 0.5;
+                        let targetGroup = group21Ref || model;
+                        if (targetGroup) {
+                            targetGroup.position.y -= deltaTime * 2.0;
+                            targetGroup.rotation.z += deltaTime * 0.02;
+                        }
+                    }
+                }
+
+            } else {
+                isNightTime = false;
+                icebergGeneratedThisNight = false;
+                isCollidedWithIceberg = false;
+                icebergSinkingProgress = 0;
+                if (icebergMesh) {
+                    scene.remove(icebergMesh);
+                    icebergMesh.geometry.dispose();
+                    icebergMesh.material.dispose();
+                    icebergMesh = null;
+                }
+                currentFogInstance = null;
+                scene.fog = null;
+
+                const heightFactor = Math.min(1.0, sunY / sunDistance);
+                dirLight.intensity = 0.2 + heightFactor * 0.6;
+                ambientLight.intensity = 0.1 + heightFactor * 0.2;
+                starField.material.opacity = Math.max(0, starField.material.opacity - deltaTime * 0.5);
+            }
+
+            if (weatherParticles && fileCamera) {
+                weatherParticles.position.x = fileCamera.position.x;
+                weatherParticles.position.z = fileCamera.position.z;
+            }
+
+            if (water) {
+                if (water.material.uniforms['time']) {
+                    water.material.uniforms['time'].value += deltaTime * 0.3;
+                }
+                
+                const time = water.material.uniforms['time'] ? water.material.uniforms['time'].value : performance.now() * 0.001;
+                const posAttr = waterGeometry.attributes.position;
+                for (let i = 0; i < posAttr.count; i++) {
+                    const ox = waterOriginalPositions[i * 3];
+                    const oy = waterOriginalPositions[i * 3 + 1];
+                    const swell = Math.sin(ox * 0.0005 + time * 0.8) * Math.cos(oy * 0.0005 + time * 0.7) * 12.0 * waveHeightMultiplier;
+                    const ripple = Math.sin(ox * 0.005 + time * 2.0) * Math.cos(oy * 0.005 + time * 2.0) * 1.5 * waveHeightMultiplier;
+                    posAttr.setZ(i, swell + ripple);
+                }
+                posAttr.needsUpdate = true;
+            }
+
+            const shipSpeedVal = window.shipForwardSpeedGlobal || 0;
+            const isMoving = Math.abs(shipSpeedVal) > 0.0001;
+
+            wakiriObjects.forEach(obj => {
+                if (isMoving) {
+                    obj.visible = true;
+                    const scaleVal = THREE.MathUtils.clamp(Math.abs(shipSpeedVal) * 15.0, 0.3, 2.0);
+                    obj.scale.set(scaleVal, scaleVal, scaleVal);
+                } else {
+                    obj.visible = false;
+                }
+            });
+
+            wakeGenObjects.forEach(obj => {
+                if (isMoving) {
+                    obj.visible = true;
+                    const lenVal = THREE.MathUtils.clamp(Math.abs(shipSpeedVal) * 20.0, 0.5, 3.0);
+                    obj.scale.set(lenVal, 1.0, lenVal);
+                    if (obj.material) {
+                        obj.material.transparent = true;
+                        obj.material.opacity = THREE.MathUtils.clamp(Math.abs(shipSpeedVal) * 10.0, 0.1, 0.7);
+                    }
+                } else {
+                    obj.visible = false;
+                }
+            });
+
+            const group21Check = scene.getObjectByName("21");
+            if (group21Check) {
+                const shipWorldPos = new THREE.Vector3();
+                group21Check.getWorldPosition(shipWorldPos);
+                const shipSpeed = window.shipForwardSpeedGlobal || 0;
+
+                if (Math.abs(shipSpeed) > 0.001) {
+                    const forwardDir = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), group21Check.rotation.y);
+                    const rightDir = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), group21Check.rotation.y);
+                    
+                    const sternPos = shipWorldPos.clone().addScaledVector(forwardDir, -25.0);
+
+                    wakeHistory.unshift({
+                        pos: sternPos,
+                        time: performance.now(),
+                        leftOffset: rightDir.clone().multiplyScalar(4.0),
+                        rightOffset: rightDir.clone().multiplyScalar(-4.0)
+                    });
+
+                    if (wakeHistory.length > wakeParticlesCount / 2) {
+                        wakeHistory.pop();
+                    }
+                }
+
+                const positions = wakeParticles.geometry.attributes.position.array;
+                let pIdx = 0;
+                const currentTime = performance.now();
+
+                for (let i = 0; i < wakeHistory.length; i++) {
+                    const h = wakeHistory[i];
+                    const age = (currentTime - h.time) / 1000.0;
+                    if (age > 15.0) continue;
+
+                    const spread = age * 3.5;
+
+                    const pLeft = h.pos.clone().add(h.leftOffset).addScaledVector(h.leftOffset, spread);
+                    pLeft.y = water.position.y + 0.5;
+                    positions[pIdx * 3] = pLeft.x;
+                    positions[pIdx * 3 + 1] = pLeft.y;
+                    positions[pIdx * 3 + 2] = pLeft.z;
+                    pIdx++;
+
+                    const pRight = h.pos.clone().add(h.rightOffset).addScaledVector(h.rightOffset, spread);
+                    pRight.y = water.position.y + 0.5;
+                    positions[pIdx * 3] = pRight.x;
+                    positions[pIdx * 3 + 1] = pRight.y;
+                    positions[pIdx * 3 + 2] = pRight.z;
+                    pIdx++;
+                }
+
+                for (let i = pIdx; i < wakeParticlesCount; i++) {
+                    positions[i * 3 + 1] = -1000;
+                }
+                wakeParticles.geometry.attributes.position.needsUpdate = true;
+            }
+
+            if (weatherParticles) {
+                const positions = weatherParticles.geometry.attributes.position.array;
+                for (let i = 1; i < positions.length; i += 3) {
+                    positions[i] -= currentWeather === "雨" ? 8.0 : 2.0;
+                    if (positions[i] < 0) positions[i] = 400;
+                }
+                weatherParticles.geometry.attributes.position.needsUpdate = true;
+            }
+
+            for (let key in doorSystem) {
+                const d = doorSystem[key]; if (d.objects.length === 0 || !d.hingePoint) continue;
+                d.currentRad += (d.targetRad - d.currentRad) * 0.1;
+                const rotMatrix = new THREE.Matrix4().makeRotationY(d.currentRad);
+                const toOrigin = new THREE.Matrix4().makeTranslation(-d.hingePoint.x, -d.hingePoint.y, -d.hingePoint.z);
+                const backTo = new THREE.Matrix4().makeTranslation(d.hingePoint.x, d.hingePoint.y, d.hingePoint.z);
+                for (let i = 0; i < d.objects.length; i++) {
+                    const obj = d.objects[i]; obj.matrix.copy(new THREE.Matrix4().multiply(backTo).multiply(rotMatrix).multiply(toOrigin).multiply(d.initialMatrices[i])); obj.matrix.decompose(obj.position, obj.quaternion, obj.scale);
+                }
+            }
+
+            // 【舵輪の慣性処理】
+            if (isSteeringMode) { 
+                let steeringInput = 0;
+                if (moveState.left) steeringInput -= 1.5; 
+                if (moveState.right) steeringInput += 1.5; 
+                steeringVelocity += steeringInput * deltaTime;
+            }
+            steeringVelocity *= Math.pow(0.1, deltaTime); // 摩擦による減衰
+            sharedRad += steeringVelocity * deltaTime;
+            sharedRad = THREE.MathUtils.clamp(sharedRad, -MAX_STEERING_RAD, MAX_STEERING_RAD);
+
+            const applySteeringX = (s) => {
+                if (s.objects.length === 0 || !s.centerPoint) return;
+                const rotMatrix = new THREE.Matrix4().makeRotationX(sharedRad);
+                const toOrigin = new THREE.Matrix4().makeTranslation(-s.centerPoint.x, -s.centerPoint.y, -s.centerPoint.z);
+                const backTo = new THREE.Matrix4().makeTranslation(s.centerPoint.x, s.centerPoint.y, s.centerPoint.z);
+                for (let i = 0; i < s.objects.length; i++) { const obj = s.objects[i]; obj.matrix.copy(new THREE.Matrix4().multiply(backTo).multiply(rotMatrix).multiply(toOrigin).multiply(s.initialMatrices[i])); obj.matrix.decompose(obj.position, obj.quaternion, obj.scale); }
+            };
+            applySteeringX(steeringSystem); applySteeringX(steeringSystem2);
+
+            // 【舵の慣性処理】
+            const rud = rudderSystem;
+            if (rud.objects.length > 0 && rud.centerPoint) {
+                let targetRudderRad = (sharedRad / MAX_STEERING_RAD) * 0.61;
+                let rudderAccel = (targetRudderRad - rudderCurrentRad) * 8.0;
+                rudderVelocity += rudderAccel * deltaTime;
+                rudderVelocity *= Math.pow(0.1, deltaTime);
+                rudderCurrentRad += rudderVelocity * deltaTime;
+
+                const rotMatrix = new THREE.Matrix4().makeRotationY(rudderCurrentRad);
+                const toOrigin = new THREE.Matrix4().makeTranslation(-rud.centerPoint.x, -rud.centerPoint.y, -rud.centerPoint.z);
+                const backTo = new THREE.Matrix4().makeTranslation(rud.centerPoint.x, rud.centerPoint.y, rud.centerPoint.z);
+                for (let i = 0; i < rud.objects.length; i++) { const obj = rud.objects[i]; obj.matrix.copy(new THREE.Matrix4().multiply(backTo).multiply(rotMatrix).multiply(toOrigin).multiply(rud.initialMatrices[i])); obj.matrix.decompose(obj.position, obj.quaternion, obj.scale); }
+            }
+
+            // 【テレグラフのレバー回転速度修正 (半分の速度: 0.4 → 0.2)】
+            if (activeTelegraphKey) {
+                const t = telegraphSystem[activeTelegraphKey]; 
+                const prevRad = t.currentLeverRad;
+                if (moveState.forward) t.currentLeverRad += 0.2;
+                if (moveState.backward) t.currentLeverRad -= 0.2;
+                t.currentLeverRad = THREE.MathUtils.clamp(t.currentLeverRad, -2.1, 2.1);
+                if (prevRad !== t.currentLeverRad) {
+                    const currentGear = getTelegraphGear(t.currentLeverRad);
+                    if (currentGear !== t.lastGear) { playTelegraphBell(); t.lastGear = currentGear; }
+                }
+            }
+
+            if (model) {
+                screwSystem.sc1_R.speedFactor = (5 - getTelegraphGear(telegraphSystem.t1_R.currentLeverRad)) * 0.03;
+                screwSystem.sc2_C.speedFactor = (5 - getTelegraphGear(telegraphSystem.t2_L.currentLeverRad)) * 0.03;
+                screwSystem.sc3_L.speedFactor = (5 - getTelegraphGear(telegraphSystem.t4_L.currentLeverRad)) * 0.03;
+            }
+
+            // 【スクリューの慣性・加速・減速・逆回転3秒停止処理】
+            for (let key in screwSystem) {
+                const s = screwSystem[key]; 
+                if (s.objects.length === 0 || !s.centerPoint) continue;
+
+                let targetSpeed = s.speedFactor || 0;
+
+                // 逆回転のための3秒停止判定
+                if (s.stopTimer > 0) {
+                    s.stopTimer -= deltaTime;
+                    targetSpeed = 0;
+                } else {
+                    // 正転から逆転、または逆転から正転へ切り替わる瞬間
+                    if ((s.currentSpeed > 0.0001 && targetSpeed < -0.0001) || (s.currentSpeed < -0.0001 && targetSpeed > 0.0001)) {
+                        targetSpeed = 0;
+                        if (Math.abs(s.currentSpeed) < 0.001) {
+                            s.stopTimer = 3.0; // 3秒間停止
+                        }
+                    }
+                }
+
+                // 【スクリューの加減速レート修正 (0.1倍: 0.5 → 0.05)】
+                const accelRate = 0.05 * deltaTime;
+                const decelRate = 0.05 * deltaTime;
+
+                if (targetSpeed > s.currentSpeed) {
+                    s.currentSpeed = Math.min(targetSpeed, s.currentSpeed + accelRate);
+                } else if (targetSpeed < s.currentSpeed) {
+                    s.currentSpeed = Math.max(targetSpeed, s.currentSpeed - decelRate);
+                }
+
+                s.currentRad += s.currentSpeed;
+
+                const rotMatrix = new THREE.Matrix4().makeRotationX(s.currentRad);
+                const toOrigin = new THREE.Matrix4().makeTranslation(-s.centerPoint.x, -s.centerPoint.y, -s.centerPoint.z);
+                const backTo = new THREE.Matrix4().makeTranslation(s.centerPoint.x, s.centerPoint.y, s.centerPoint.z);
+                for (let i = 0; i < s.objects.length; i++) { 
+                    const obj = s.objects[i]; 
+                    obj.matrix.copy(new THREE.Matrix4().multiply(backTo).multiply(rotMatrix).multiply(toOrigin).multiply(s.initialMatrices[i])); 
+                    obj.matrix.decompose(obj.position, obj.quaternion, obj.scale); 
+                }
+            }
+
+            for (let key in telegraphSystem) {
+                const t = telegraphSystem[key]; 
+                const rowEl = document.getElementById(`monitor-${key}`); 
+                const valEl = document.getElementById(`val-${key}`);
+                
+                if (valEl) { 
+                    valEl.innerText = GEAR_LABELS[getTelegraphGear(t.currentLeverRad)]; 
+                    if (rowEl) { 
+                        if (key === activeTelegraphKey) rowEl.classList.add('operating'); 
+                        else rowEl.classList.remove('operating'); 
+                    } 
+                }
+                
+                if (!t.centerPoint) continue;
+
+                const targetArrowRad = t.currentLeverRad * 0.5;
+                t.currentArrowRad += (targetArrowRad - t.currentArrowRad) * 0.05;
+
+                const toOrigin = new THREE.Matrix4().makeTranslation(-t.centerPoint.x, -t.centerPoint.y, -t.centerPoint.z);
+                const backTo = new THREE.Matrix4().makeTranslation(t.centerPoint.x, t.centerPoint.y, t.centerPoint.z);
+                const rotLever = new THREE.Matrix4().makeRotationZ(t.currentLeverRad);
+                for (let i = 0; i < t.leverObjects.length; i++) { const obj = t.leverObjects[i]; obj.matrix.copy(new THREE.Matrix4().multiply(backTo).multiply(rotLever).multiply(toOrigin).multiply(t.initialLeverMatrices[i])); obj.matrix.decompose(obj.position, obj.quaternion, obj.scale); }
+                const rotArrow = new THREE.Matrix4().makeRotationZ(t.currentArrowRad);
+                for (let i = 0; i < t.arrowObjects.length; i++) { const obj = t.arrowObjects[i]; obj.matrix.copy(new THREE.Matrix4().multiply(backTo).multiply(rotArrow).multiply(toOrigin).multiply(t.initialArrowMatrices[i])); obj.matrix.decompose(obj.position, obj.quaternion, obj.scale); }
+            }
+
+            if (model && smokeSources.length > 0) {
+                if (Math.random() < 0.25 && smokeParticles.length < MAX_SMOKE_PARTICLES) {
+                    const srcNode = smokeSources[Math.floor(Math.random() * smokeSources.length)]; const worldPos = new THREE.Vector3(); srcNode.getWorldPosition(worldPos);
+                    const smokeGeo = new THREE.SphereGeometry(0.18, 5, 5);
+                    const smokeMat = new THREE.MeshBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.NormalBlending });
+                    const particle = new THREE.Mesh(smokeGeo, smokeMat); particle.position.copy(worldPos);
+                    particle.userData = { vx: (Math.random() - 0.5) * 0.3, vy: 1.2 + Math.random() * 1.0, vz: (Math.random() - 0.5) * 0.3, age: 0, maxAge: 70 + Math.random() * 50 };
+                    scene.add(particle); smokeParticles.push(particle);
+                }
+            }
+            for (let i = smokeParticles.length - 1; i >= 0; i--) {
+                const p = smokeParticles[i]; p.position.x += p.userData.vx * deltaTime; p.position.y += p.userData.vy * deltaTime; p.position.z += p.userData.vz * deltaTime;
+                p.userData.age++; p.scale.addScalar(deltaTime * 0.4); p.material.opacity = 0.5 * (1.0 - (p.userData.age / p.userData.maxAge));
+                if (p.userData.age >= p.userData.maxAge) { scene.remove(p); p.geometry.dispose(); p.material.dispose(); smokeParticles.splice(i, 1); }
+            }
+        }
+
+        document.getElementById('file-input').addEventListener('change', function(e) {
+            const file = e.target.files[0]; if (!file) return;
+            document.getElementById('load-status').innerText = "ZIP展開中...";
+            if (model) { smokeParticles.forEach(p => { scene.remove(p); p.geometry.dispose(); p.material.dispose(); }); smokeParticles = []; scene.remove(model); }
+            ladderObjects = []; fileCamera = null; isWalkMode = false; activeCamera = defaultCamera; controls.enabled = true;
+            camStatusBoard.style.display = 'none'; crosshair.style.display = 'none';
+            isClimbingMode = false; activeLadderBox = null; isSteeringMode = false; activeTelegraphKey = null; sharedRad = 0; steeringVelocity = 0; rudderCurrentRad = 0; rudderVelocity = 0; smokeSources = []; isLEmissiveOn = false; isKEmissiveOn = false; whistleBuffer = null; bellBuffer = null;
+            wakiriObjects = []; wakeGenObjects = [];
+            for (let key in doorSystem) { doorSystem[key].objects = []; doorSystem[key].initialMatrices = []; doorSystem[key].hingePoint = null; doorSystem[key].isOpen = false; doorSystem[key].targetRad = 0; doorSystem[key].currentRad = 0; }
+            steeringSystem.objects = []; steeringSystem.initialMatrices = []; steeringSystem.centerPoint = null;
+            steeringSystem2.objects = []; steeringSystem2.initialMatrices = []; steeringSystem2.centerPoint = null;
+            rudderSystem.objects = []; rudderSystem.initialMatrices = []; rudderSystem.centerPoint = null;
+            for (let key in screwSystem) { screwSystem[key].objects = []; screwSystem[key].initialMatrices = []; screwSystem[key].centerPoint = null; screwSystem[key].currentRad = 0; screwSystem[key].currentSpeed = 0; screwSystem[key].speedFactor = 0; screwSystem[key].stopTimer = 0; }
+            for (let key in telegraphSystem) { const t = telegraphSystem[key]; t.leverObjects = []; t.arrowObjects = []; t.initialLeverMatrices = []; t.initialArrowMatrices = []; t.centerPoint = null; t.currentLeverRad = 0; t.currentArrowRad = 0; t.lastGear = 5; }
+
+            JSZip.loadAsync(file).then(function(zip) {
+                let targetFile = null; 
+                let audioFiles = [];
+                zip.forEach(function (relativePath, zipEntry) {
+                    if (!zipEntry.dir) {
+                        const lowerName = zipEntry.name.toLowerCase();
+                        if (lowerName.endsWith('.glb') || lowerName.endsWith('.gltf')) targetFile = zipEntry;
+                        if (lowerName.endsWith('.mp3') || lowerName.endsWith('.wav') || lowerName.endsWith('.ogg')) {
+                            audioFiles.push(zipEntry);
+                        }
+                    }
+                });
+
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+                audioFiles.forEach(function(audioEntry) {
+                    const fullName = audioEntry.name;
+                    audioEntry.async("arraybuffer").then(function(buffer) {
+                        audioCtx.decodeAudioData(buffer).then(function(decoded) {
+                            if (fullName.includes("Bell_Accent15-1(Low)")) {
+                                bellBuffer = decoded;
+                            }
+                            if (fullName.includes("汽笛")) {
+                                whistleBuffer = decoded;
+                            }
+                        }).catch(e => console.log("Audio Decode Error", e));
+                    });
+                });
+
+                if (!targetFile) { document.getElementById('load-status').innerText = "エラー: 模型未検出"; return; }
+                document.getElementById('load-status').innerText = "3Dモデル読み込み中...";
+                
+                return targetFile.async("blob").then(function(blob) {
+                    const url = URL.createObjectURL(blob);
+                    const loader = new THREE.GLTFLoader();
+                    loader.load(url, function(gltf) {
+                        model = gltf.scene;
+                        if (gltf.cameras && gltf.cameras.length > 0) { 
+                            fileCamera = gltf.cameras[0]; 
+                            fileCamera.aspect = window.innerWidth / window.innerHeight; 
+                            fileCamera.far = 1000000;
+                            fileCamera.updateProjectionMatrix(); 
+                            camStatusBoard.style.display = 'block'; 
+                            camStatusBoard.innerText = "視点：俯瞰カメラ";
+                        }
+
+                        for (let key in doorSystem) {
+                            const d = doorSystem[key]; model.traverse(node => { if (d.parts.includes(node.name)) { node.matrixAutoUpdate = false; d.objects.push(node); d.initialMatrices.push(node.matrix.clone()); } });
+                            if (d.objects.length > 0) { const doorBox = new THREE.Box3(); d.objects.forEach(obj => { doorBox.union(new THREE.Box3().setFromObject(obj)); }); const center = new THREE.Vector3(); doorBox.getCenter(center); d.hingePoint = new THREE.Vector3((key === 'portside' || key === 'door1') ? doorBox.max.x : doorBox.min.x, center.y, center.z); }
+                        }
+                        model.traverse(node => {
+                            if (steeringSystem.parts.includes(node.name)) { node.matrixAutoUpdate = false; steeringSystem.objects.push(node); steeringSystem.initialMatrices.push(node.matrix.clone()); }
+                            if (steeringSystem2.parts.includes(node.name)) { node.matrixAutoUpdate = false; steeringSystem2.objects.push(node); steeringSystem2.initialMatrices.push(node.matrix.clone()); }
+                            if (rudderSystem.parts.includes(node.name)) { node.matrixAutoUpdate = false; rudderSystem.objects.push(node); rudderSystem.initialMatrices.push(node.matrix.clone()); }
+                            for (let key in screwSystem) { if (screwSystem[key].parts.includes(node.name)) { node.matrixAutoUpdate = false; screwSystem[key].objects.push(node); screwSystem[key].initialMatrices.push(node.matrix.clone()); } }
+                            for (let key in telegraphSystem) { const t = telegraphSystem[key]; if (t.leverParts.includes(node.name)) { node.matrixAutoUpdate = false; t.leverObjects.push(node); t.initialLeverMatrices.push(node.matrix.clone()); } if (t.arrowParts.includes(node.name)) { node.matrixAutoUpdate = false; t.arrowObjects.push(node); t.initialArrowMatrices.push(node.matrix.clone()); } }
+                        });
+                        const calcCenter = (s) => { if (s.objects.length > 0) { const b = new THREE.Box3(); s.objects.forEach(obj => b.union(new THREE.Box3().setFromObject(obj))); s.centerPoint = new THREE.Vector3(); b.getCenter(s.centerPoint); } };
+                        calcCenter(steeringSystem); calcCenter(steeringSystem2); calcCenter(rudderSystem);
+                        for (let key in screwSystem) { const s = screwSystem[key]; const axisNode = model.getObjectByName(s.axisPart); if (axisNode) { const axisBox = new THREE.Box3().setFromObject(axisNode); s.centerPoint = new THREE.Vector3(); axisBox.getCenter(s.centerPoint); } else { calcCenter(s); } }
+                        for (let key in telegraphSystem) { const t = telegraphSystem[key]; const dialNode = model.getObjectByName(t.dialPart); if (dialNode) { const dialBox = new THREE.Box3().setFromObject(dialNode); t.centerPoint = new THREE.Vector3(); dialBox.getCenter(t.centerPoint); } else { const b = new THREE.Box3(); t.leverObjects.forEach(obj => b.union(new THREE.Box3().setFromObject(obj))); if (t.leverObjects.length > 0) { t.centerPoint = new THREE.Vector3(); b.getCenter(t.centerPoint); } } }
+
+                        model.traverse(function(node) {
+                            if (node.isMesh) {
+                                node.frustumCulled = false; if(node.geometry) { node.geometry.computeBoundingBox(); node.geometry.computeBoundingSphere(); }
+                                if (node.material) { const mats = Array.isArray(node.material) ? node.material : [node.material]; mats.forEach(mat => { mat.side = THREE.DoubleSide; mat.needsUpdate = true; }); }
+                            }
+                            if (node.name && ["empty_270", "empty_56", "empty_998", "empty_147", "empty_1266", "empty_1679"].includes(node.name)) ladderObjects.push(node);
+                            if (node.name && ["Exhaust_smoke_generation_position", "Exhaust_smoke_generation_position_1", "Exhaust_smoke_generation_position_2"].includes(node.name)) smokeSources.push(node);
+                            
+                            if (node.name === "波切生成") wakiriObjects.push(node);
+                            if (node.name === "航跡生成") wakeGenObjects.push(node);
+                        });
+
+                        scene.add(model);
+
+                        const box = new THREE.Box3().setFromObject(model); const center = new THREE.Vector3(); box.getCenter(center); const size = new THREE.Vector3(); box.getSize(size);
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        gridHelper.position.y = box.min.y; controls.target.copy(center); defaultCamera.position.set(center.x + maxDim*1.5, center.y + maxDim*0.7, center.z + maxDim*1.5); controls.update();
+                        document.getElementById('load-status').innerText = `読込成功！ ${fileCamera ? "＋内蔵カメラ検出(3キー有効)" : "（内蔵カメラ無し）"}`;
+
+                        if (mainUiPanel) {
+                            mainUiPanel.style.opacity = '0';
+                            mainUiPanel.style.pointerEvents = 'none';
+                        }
+                    });
+                });
+            }).catch(function(err) { console.error(err); document.getElementById('load-status').innerText = "エラー: ZIP展開失敗"; });
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (isWalkMode) updateWalkAndLook(); else controls.update();
+            updateAnimatedObjects(); renderer.render(scene, activeCamera);
+        }
+        animate();
+        window.addEventListener('resize', () => {
+            defaultCamera.aspect = window.innerWidth / window.innerHeight; defaultCamera.updateProjectionMatrix();
+            if (fileCamera) { fileCamera.aspect = window.innerWidth / window.innerHeight; fileCamera.updateProjectionMatrix(); }
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        (function() {
+            window.shipForwardSpeedGlobal = 0; 
+            let currentTurnSpeed = 0; 
+            const originalAnimate = window.animate;
+            const originalToggle = window.toggleCameraView;
+
+            if (typeof toggleCameraView === 'function') {
+                window.toggleCameraView = function() {
+                    if (fileCamera && fileCamera.parent && fileCamera.parent !== scene) {
+                        const worldPos = new THREE.Vector3();
+                        const worldQuat = new THREE.Quaternion();
+                        fileCamera.getWorldPosition(worldPos);
+                        fileCamera.getWorldQuaternion(worldQuat);
+                        
+                        scene.add(fileCamera);
+                        fileCamera.position.copy(worldPos);
+                        fileCamera.quaternion.copy(worldQuat);
+                    }
+                    originalToggle();
+                };
+            }
+
+            if (typeof animate === 'function') {
+                window.animate = function() {
+                    const prevShipPos = new THREE.Vector3();
+                    const group21_init = scene.getObjectByName("21");
+                    if (group21_init) group21_init.getWorldPosition(prevShipPos);
+                    const prevShipRotationY = group21_init ? group21_init.rotation.y : 0;
+
+                    originalAnimate();
+                    if (!model) return;
+
+                    let portGroup = model.getObjectByName("port");
+                    if (portGroup) {
+                        if (!portGroup.userData.isInitialized) {
+                            portGroup.userData.initialPosition = portGroup.position.clone();
+                            portGroup.userData.initialRotation = portGroup.rotation.clone();
+                            portGroup.userData.initialScale = portGroup.scale.clone();
+                            portGroup.userData.isInitialized = true;
+                        } else {
+                            portGroup.position.copy(portGroup.userData.initialPosition);
+                            portGroup.rotation.copy(portGroup.userData.initialRotation);
+                            portGroup.scale.copy(portGroup.userData.initialScale);
+                        }
+                    }
+
+                    const rSpeed = screwSystem.sc1_R.currentSpeed || 0;
+                    const cSpeed = screwSystem.sc2_C.currentSpeed || 0;
+                    const lSpeed = screwSystem.sc3_L.currentSpeed || 0;
+                    const avgScrewSpeed = (rSpeed + cSpeed + lSpeed) / 3;
+
+                    const targetShipSpeed = avgScrewSpeed * 40.0; 
+
+                    window.shipForwardSpeedGlobal += (targetShipSpeed - window.shipForwardSpeedGlobal) * 0.00005;
+
+                    let rudderRad = rudderCurrentRad; // 慣性適用後の舵角を使用
+                    
+                    const group21 = scene.getObjectByName("21");
+                    if (group21) {
+                        const targetTurnSpeed = -rudderRad * Math.abs(window.shipForwardSpeedGlobal) * 0.0002;
+                        currentTurnSpeed += (targetTurnSpeed - currentTurnSpeed) * 0.001;
+                        group21.rotation.y += currentTurnSpeed;
+
+                        const forwardVector = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), group21.rotation.y);
+                        group21.position.addScaledVector(forwardVector, window.shipForwardSpeedGlobal);
+                    }
+
+                    const queenMaryGroup = scene.getObjectByName("RMS+Queen+Mary");
+                    if (queenMaryGroup) {
+                        if (!queenMaryGroup.userData.isInitialized) {
+                            queenMaryGroup.userData.initialPosition = queenMaryGroup.position.clone();
+                            queenMaryGroup.userData.initialRotation = queenMaryGroup.rotation.clone();
+                            queenMaryGroup.userData.isInitialized = true;
+                        }
+                        queenMaryGroup.rotation.y += currentTurnSpeed;
+                        const qmForwardVector = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), queenMaryGroup.rotation.y);
+                        queenMaryGroup.position.addScaledVector(qmForwardVector, window.shipForwardSpeedGlobal);
+                    }
+
+                    const currentShipPos = new THREE.Vector3();
+                    if (group21) group21.getWorldPosition(currentShipPos);
+                    const actualMoveDelta = new THREE.Vector3().subVectors(currentShipPos, prevShipPos);
+                    const actualTurnDelta = group21 ? group21.rotation.y - prevShipRotationY : 0;
+
+                    if (fileCamera) {
+                        fileCamera.position.add(actualMoveDelta);
+                        
+                        fileCamera.position.sub(currentShipPos);
+                        fileCamera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), actualTurnDelta);
+                        fileCamera.position.add(currentShipPos);
+                        
+                        if (isWalkMode) {
+                            yaw += actualTurnDelta;
+                        }
+                    }
+
+                    model.traverse(function(node) {
+                        if (node.isMesh) {
+                            node.matrixAutoUpdate = true;
+                            node.updateMatrixWorld(true);
+                            if (node.geometry) {
+                                if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+                                if (!node.geometry.boundingSphere) node.geometry.computeBoundingSphere();
+                            }
+                        }
+                    });
+                };
+            }
+        })();
+    </script>
+    <script>
+        (function() {
+            let customSmokeParticles = [];
+            let customSteamParticles = []; 
+            let lastUpdate = performance.now();
+
+            const originalUpdateAnimatedObjects = window.updateAnimatedObjects;
+            window.updateAnimatedObjects = function() {
+                originalUpdateAnimatedObjects();
+
+                if (window.smokeParticles && window.smokeParticles.length > 0) {
+                    window.smokeParticles.forEach(p => {
+                        scene.remove(p);
+                        if (p.geometry) p.geometry.dispose();
+                        if (p.material) p.material.dispose();
+                    });
+                    window.smokeParticles = [];
+                }
+
+                if (!model || !smokeSources || smokeSources.length === 0) return;
+
+                const current = performance.now();
+                const dt = (current - lastUpdate) / 1000;
+                lastUpdate = current;
+
+                const rSpeed = Math.abs(screwSystem.sc1_R.speedFactor || 0);
+                const cSpeed = Math.abs(screwSystem.sc2_C.speedFactor || 0);
+                const lSpeed = Math.abs(screwSystem.sc3_L.speedFactor || 0);
+                const enginePower = Math.max(rSpeed, cSpeed, lSpeed, 0.005); 
+
+                const spawnProbability = 0.85 * 10; 
+
+                if (Math.random() < spawnProbability) {
+                    const targets = smokeSources.filter(n => 
+                        n.name === "Exhaust_smoke_generation_position" || 
+                        n.name === "Exhaust_smoke_generation_position_1" || 
+                        n.name === "Exhaust_smoke_generation_position_2"
+                    );
+                    const activeSources = targets.length > 0 ? targets : smokeSources;
+                    const srcNode = activeSources[Math.floor(Math.random() * activeSources.length)];
+
+                    const wPos = new THREE.Vector3();
+                    srcNode.getWorldPosition(wPos);
+
+                    const smokeGeo = new THREE.SphereGeometry(2.0, 8, 8);
+                    
+                    const smokeMat = new THREE.MeshBasicMaterial({
+                        color: 0x2c3035, 
+                        transparent: true,
+                        opacity: 0.2, 
+                        depthWrite: false,
+                        blending: THREE.NormalBlending
+                    });
+
+                    const pMesh = new THREE.Mesh(smokeGeo, smokeMat);
+                    
+                    pMesh.position.copy(wPos).add(new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.5,
+                        (Math.random() - 0.5) * 0.2,
+                        (Math.random() - 0.5) * 0.5
+                    ));
+
+                    const group21 = scene.getObjectByName("21");
+                    const shipRotationY = group21 ? group21.rotation.y : (model ? model.rotation.y : 0);
+                    const relativeWindDir = new THREE.Vector3(-1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), shipRotationY);
+                    const currentShipSpeed = window.shipForwardSpeedGlobal || 0;
+                    
+                    const windSpeedFactor = currentShipSpeed * 45.0;
+
+                    pMesh.userData = {
+                        vx: (relativeWindDir.x * windSpeedFactor) + (Math.random() - 0.5) * 0.3,
+                        vy: 2.5 + (enginePower * 12.0) + Math.random() * 1.5, 
+                        vz: (relativeWindDir.z * windSpeedFactor) + (Math.random() - 0.5) * 0.3,
+                        age: 0,
+                        maxAge: 30 + (Math.random() - 0.5) * 5, 
+                        seed: Math.random() * 100, 
+                        targetScale: (5.5 + (enginePower * 15.0)) * 2.0
+                    };
+
+                    pMesh.scale.set(0.2, 0.2, 0.2);
+
+                    scene.add(pMesh);
+                    customSmokeParticles.push(pMesh);
+                }
+
+                let steamSources = [];
+                model.traverse(node => {
+                    if (node.name === "Exhaust_smoke_generation_position2" || 
+                        node.name === "Exhaust_smoke_generation_position2_1" || 
+                        node.name === "Exhaust_smoke_generation_position2_2" || 
+                        node.name === "Exhaust_smoke_generation_position2_3" || 
+                        node.name === "Exhaust_smoke_generation_position2_4") {
+                        steamSources.push(node);
+                    }
+                });
+
+                if (isEnterPressed && steamSources.length > 0) {
+                    for (let k = 0; k < 3; k++) {
+                        const steamNode = steamSources[Math.floor(Math.random() * steamSources.length)];
+                        const steamPos = new THREE.Vector3();
+                        steamNode.getWorldPosition(steamPos);
+
+                        const steamGeo = new THREE.SphereGeometry(1.5, 6, 6);
+                        const steamMat = new THREE.MeshBasicMaterial({
+                            color: 0xe2e8f0,
+                            transparent: true,
+                            opacity: 0.25,
+                            depthWrite: false,
+                            blending: THREE.NormalBlending
+                        });
+                        const steamMesh = new THREE.Mesh(steamGeo, steamMat);
+                        steamMesh.position.copy(steamPos);
+                        steamMesh.userData = {
+                            vx: (Math.random() - 0.5) * 0.4,
+                            vy: 3.5 + Math.random() * 2.0,
+                            vz: (Math.random() - 0.5) * 0.4,
+                            age: 0,
+                            maxAge: 15 + Math.random() * 10
+                        };
+                        scene.add(steamMesh);
+                        customSteamParticles.push(steamMesh);
+                    }
+                }
+
+                for (let i = customSteamParticles.length - 1; i >= 0; i--) {
+                    const sp = customSteamParticles[i];
+                    sp.userData.age += dt;
+                    sp.position.x += sp.userData.vx * dt;
+                    sp.position.y += sp.userData.vy * dt;
+                    sp.position.z += sp.userData.vz * dt;
+                    sp.scale.addScalar(dt * 1.2);
+                    sp.material.opacity = 0.25 * (1.0 - (sp.userData.age / sp.userData.maxAge));
+
+                    if (sp.userData.age >= sp.userData.maxAge) {
+                        scene.remove(sp);
+                        sp.geometry.dispose();
+                        sp.material.dispose();
+                        customSteamParticles.splice(i, 1);
+                    }
+                }
+
+                for (let i = customSmokeParticles.length - 1; i >= 0; i--) {
+                    const p = customSmokeParticles[i];
+                    
+                    p.userData.age += dt;
+                    const age = p.userData.age;
+
+                    const noise = Math.sin(age * 2.0 + p.userData.seed) * 0.15;
+
+                    p.position.x += (p.userData.vx + noise) * dt;
+                    p.position.y += p.userData.vy * dt;
+                    p.position.z += (p.userData.vz + noise) * dt;
+
+                    const growthDuration = 0.3; 
+                    let currentScale = 1.0;
+                    if (age < growthDuration) {
+                        currentScale = THREE.MathUtils.lerp(0.2, p.userData.targetScale, age / growthDuration);
+                    } else {
+                        currentScale = p.userData.targetScale + (age - growthDuration) * 0.4;
+                    }
+                    p.scale.set(currentScale, currentScale, currentScale);
+
+                    const lifeRatio = age / p.userData.maxAge;
+                    if (lifeRatio < 0.1) {
+                        p.material.opacity = THREE.MathUtils.lerp(0.0, 0.2, lifeRatio / 0.1);
+                    } else {
+                        p.material.opacity = 0.2 * (1.0 - (lifeRatio - 0.1) / 0.9);
+                    }
+
+                    if (age >= p.userData.maxAge) {
+                        scene.remove(p);
+                        p.geometry.dispose();
+                        p.material.dispose();
+                        customSmokeParticles.splice(i, 1);
+                    }
+                }
+            };
+
+            const fileInputEl = document.getElementById('file-input');
+            if (fileInputEl) {
+                fileInputEl.addEventListener('change', function() {
+                    customSmokeParticles.forEach(p => {
+                        scene.remove(p);
+                        if (p.geometry) p.geometry.dispose();
+                        if (p.material) p.material.dispose();
+                    });
+                    customSmokeParticles = [];
+
+                    customSteamParticles.forEach(sp => {
+                        scene.remove(sp);
+                        if (sp.geometry) sp.geometry.dispose();
+                        if (sp.material) sp.material.dispose();
+                    });
+                    customSteamParticles = [];
+                });
+            }
+        })();
+    </script>
+</body>
+</html>
